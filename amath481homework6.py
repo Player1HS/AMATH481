@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.fftpack import fft2, ifft2
 from scipy.integrate import solve_ivp
+from scipy.linalg import kron
 
 # Define parameters
 tspan = np.arange(0, 4.5, 0.5)
@@ -53,9 +54,9 @@ def spc_rhs(t, transformed_values):
     u = np.real(ifft2(ut))
     v = np.real(ifft2(vt))
 
-    A = u**2 + v**2
-    lambd = 1 - A**2
-    omega = -beta*(A**2)
+    A2 = u**2 + v**2
+    lambd = 1 - A2
+    omega = -beta*(A2)
     
     dut_dt = (fft2(lambd*u - omega*v) + D1*laplacian_ut).reshape(N)
     dut_dt = np.hstack([np.real(dut_dt),np.imag(dut_dt)])
@@ -77,36 +78,88 @@ utcsol = utsol[:N, :] + 1j*utsol[:N, :]
 vtcsol = vtsol[:N, :] + 1j * vtsol[N:, :]
 
 A1 = np.vstack([utcsol, vtcsol])
-print(A1.shape)
-print(A1)
 
-# Plotting
-u_all = np.real(ifft2(utcsol.reshape(N, -1)))  # Get all values of u over time
-v_all = np.real(ifft2(vtcsol.reshape(N, -1)))  # Get all values of v over time
+# # Plotting
+# u_all = np.real(ifft2(utcsol.reshape(N, -1)))  # Get all values of u over time
+# v_all = np.real(ifft2(vtcsol.reshape(N, -1)))  # Get all values of v over time
 
-u_min = np.min(u_all)
-u_max = np.max(u_all)
+# u_min = np.min(u_all)
+# u_max = np.max(u_all)
 
-v_min = np.min(v_all)
-v_max = np.max(v_all)
-for step, t in enumerate(tspan):
-    u = np.real(ifft2(utcsol[:, step].reshape((nx, ny))))
-    v = np.real(ifft2(vtcsol[:, step].reshape((nx, ny))))
+# v_min = np.min(v_all)
+# v_max = np.max(v_all)
+# for step, t in enumerate(tspan):
+#     u = np.real(ifft2(utcsol[:, step].reshape((nx, ny))))
+#     v = np.real(ifft2(vtcsol[:, step].reshape((nx, ny))))
 
-    plt.subplot(3, 3, step + 1)
+#     plt.subplot(3, 3, step + 1)
     
-    # Plot u with one colormap
-    c1 = plt.pcolor(x, y, u, cmap='viridis', vmin=u_min, vmax=u_max)
+#     # Plot u with one colormap
+#     c1 = plt.pcolor(x, y, u, cmap='viridis', vmin=u_min, vmax=u_max)
     
-    # Plot v with another colormap, semi-transparent
-    c2 = plt.pcolor(x, y, v, cmap='plasma', vmin=v_min, vmax=v_max, alpha=0.6)
+#     # Plot v with another colormap, semi-transparent
+#     c2 = plt.pcolor(x, y, v, cmap='plasma', vmin=v_min, vmax=v_max, alpha=0.6)
     
-    plt.title(f'Time: {t}')
-    plt.colorbar(c1)  # Colorbar for u
-    plt.colorbar(c2)  # Colorbar for v
+#     plt.title(f'Time: {t}')
+#     plt.colorbar(c1)  # Colorbar for u
+#     plt.colorbar(c2)  # Colorbar for v
 
-plt.tight_layout()
-plt.show()
+# plt.tight_layout()
+# plt.show()
 
 #=====================================================================================
 # PART B
+
+def cheb(N):
+	if N==0: 
+		D = 0.; x = 1.
+	else:
+		n = np.arange(0,N+1)
+		x = np.cos(np.pi*n/N).reshape(N+1,1) 
+		c = (np.hstack(( [2.], np.ones(N-1), [2.]))*(-1)**n).reshape(N+1,1)
+		X = np.tile(x,(1,N+1))
+		dX = X - X.T
+		D = np.dot(c,1./c.T)/(dX+np.eye(N+1))
+		D -= np.diag(np.sum(D.T,axis=0))
+	return D, x.reshape(N+1)
+
+N = 30
+D, x = cheb(N)
+
+# no flux boundaries
+D[N,:] = 0
+D[0,:] = 0
+
+Dxx = np.dot(D,D)/((Lx/2)**2)
+n2 = (N+1)**2
+I = np.eye(len(Dxx))
+L = kron(I,Dxx)+kron(Dxx,I) # 2D laplacian
+
+y = x
+X,Y = np.meshgrid(x,y)
+X = X*(Lx/2)
+Y = Y*(Ly/2)
+
+r = np.sqrt(X**2 + Y**2)
+theta = np.angle(X + 1j*Y)
+U = np.tanh(r) * np.cos(m*theta - r)
+V = np.tanh(r) * np.sin(m*theta - r)
+
+uv0 = np.hstack([U.reshape(n2), V.reshape(n2)])
+
+def RD_2D(t,uv):
+    u = uv[0:n2]
+    v = uv[n2:]
+
+    A2 = u**2 + v**2
+    lambd = 1 - A2
+    omega = -beta*A2
+
+    rhs_u = D1*np.dot(L,u) + lambd*u - omega*v
+    rhs_v = D2*np.dot(L,v) + omega*u + lambd*v
+    rhs = np.hstack([rhs_u, rhs_v])
+    return rhs
+
+sol = solve_ivp(RD_2D, [0, 4], uv0, t_eval=tspan, method='RK45')
+A2 = sol.y
+print(A2)
